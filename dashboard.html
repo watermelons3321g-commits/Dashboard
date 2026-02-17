@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CryptoPulse - Live Dashboard</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { background-color: #111827; color: white; }
+        .pulse { animation: pulse-animation 2s infinite; }
+        @keyframes pulse-animation {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        function Dashboard() {
+            const [price, setPrice] = useState(0);
+            const [historyData, setHistoryData] = useState({ labels: [], data: [] });
+            const [status, setStatus] = useState('Connecting...');
+            const [color, setColor] = useState('text-gray-400');
+            const chartRef = useRef(null);
+
+            useEffect(() => {
+                async function fetchHistory() {
+                    try {
+                        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit=50');
+                        const data = await res.json();
+                        const labels = data.map(candle => new Date(candle[0]).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
+                        const prices = data.map(candle => parseFloat(candle[4]));
+                        
+                        setHistoryData({ labels, data: prices });
+                        
+                        const lastPrice = prices[prices.length - 1];
+                        setPrice(lastPrice);
+                        
+                        const firstPrice = prices[0];
+                        setColor(lastPrice >= firstPrice ? 'text-green-400' : 'text-red-400');
+                    } catch (e) {
+                        console.error(e);
+                        setStatus('API Error');
+                    }
+                }
+                fetchHistory();
+            }, []);
+
+            useEffect(() => {
+                const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@trade');
+                ws.onopen = () => setStatus('Live');
+                ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    setPrice(parseFloat(message.p));
+                };
+                ws.onclose = () => setStatus('Disconnected');
+                return () => ws.close();
+            }, []);
+
+            useEffect(() => {
+                if (historyData.labels.length > 0 && chartRef.current) {
+                    if (chartRef.current.chartInstance) {
+                        chartRef.current.chartInstance.destroy();
+                    }
+
+                    const ctx = chartRef.current.getContext('2d');
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+                    gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)');
+                    gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
+
+                    chartRef.current.chartInstance = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: historyData.labels,
+                            datasets: [{
+                                label: 'BTC/USDT',
+                                data: historyData.data,
+                                borderColor: '#3B82F6',
+                                backgroundColor: gradient,
+                                borderWidth: 2,
+                                fill: true,
+                                tension: 0.4,
+                                pointRadius: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { display: false } },
+                            scales: { x: { display: false }, y: { display: false } },
+                            animation: { duration: 0 }
+                        }
+                    });
+                }
+            }, [historyData]);
+
+            return (
+                <div className="max-w-3xl mx-auto p-6 font-sans">
+                    <header className="mb-8 flex justify-between items-center border-b border-gray-700 pb-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-white">CryptoPulse</h1>
+                            <p className="text-gray-400 text-sm">BTC/USDT Market Data</p>
+                        </div>
+                        <div className="text-right">
+                            <div className={`text-xs font-mono ${status === 'Live' ? 'text-green-400' : 'text-red-400'}`}>
+                                ● {status}
+                            </div>
+                        </div>
+                    </header>
+
+                    <div className="bg-gray-800 rounded-2xl p-8 shadow-xl mb-6 border border-gray-700 relative overflow-hidden">
+                        <h2 className="text-gray-400 text-sm uppercase tracking-wider font-semibold mb-2">Current Price</h2>
+                        <div className="flex items-baseline gap-4">
+                            <span className={`text-5xl font-mono font-bold tracking-tighter ${color}`}>
+                                ${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="bg-gray-800 rounded-2xl p-6 shadow-xl border border-gray-700">
+                        <h3 className="text-gray-400 text-sm font-semibold mb-4">Price History (1H)</h3>
+                        <div className="h-64 w-full">
+                            <canvas ref={chartRef}></canvas>
+                        </div>
+                    </div>
+
+                    <footer className="mt-8 text-center text-gray-600 text-xs">
+                        <p>&copy; 2024 CryptoPulse Dashboard</p>
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Dashboard />);
+    </script>
+</body>
+</html>
